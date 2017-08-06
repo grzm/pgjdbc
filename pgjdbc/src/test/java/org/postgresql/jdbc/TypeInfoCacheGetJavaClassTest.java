@@ -27,6 +27,10 @@ import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Collection;
 
+/*
+ This extends BaseTest4 instead of TypeInfoCachePGTypeBaseTest as it uses more than one custom type.
+ PgTypeSet (used in TypeInfoCachePGTypeBaseTest) only creates a single type of custom type.
+ */
 @RunWith(Parameterized.class)
 public class TypeInfoCacheGetJavaClassTest extends BaseTest4 {
   private TypeInfo typeInfo;
