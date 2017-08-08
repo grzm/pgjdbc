@@ -90,9 +90,6 @@ public class TypeInfoCacheGetPGTypeSearchPathTest extends BaseTest4 {
         },
     });
 
-    /*
-     TEXT matches public because it's simple and lowered on search.
-    */
     cases.add(new Object[]{
         new PgTypeStruct[]{new PgTypeStruct("pg_catalog", "text"),
             new PgTypeStruct("public", "text")},
@@ -101,14 +98,11 @@ public class TypeInfoCacheGetPGTypeSearchPathTest extends BaseTest4 {
           {
             put("text", new PgTypeStruct("pg_catalog", "text"));
             put("%text%", new PgTypeStruct("pg_catalog", "text"));
-            put("TEXT", Arrays.asList(
-                new PgTypeStruct("public", "text"),
-                new PgTypeStruct("pg_catalog", "text")));
+            put("TEXT", new PgTypeStruct("pg_catalog", "text"));
             put("%TEXT%", PgTypeStruct.UNSPECIFIED);
           }
         },
     });
-
 
     // only quoted %TEXT% matches public.TEXT
     cases.add(new Object[]{

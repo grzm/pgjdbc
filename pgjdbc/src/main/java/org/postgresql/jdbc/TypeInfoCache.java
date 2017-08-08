@@ -20,6 +20,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -56,6 +57,7 @@ public class TypeInfoCache implements TypeInfo {
   private final int _unknownLength;
   private PreparedStatement _getOidStatementSimple;
   private PreparedStatement _getOidStatementComplexNonArray;
+  private PreparedStatement _getOidStatementSimpleArray;
   private PreparedStatement _getOidStatementComplexArray;
   private PreparedStatement _getNameStatement;
 
@@ -296,20 +298,20 @@ public class TypeInfoCache implements TypeInfo {
       return isElement ? "" : ARRAY_SUFFIX;
     }
 
-    private static String quote(String ident) {
+    private static String quote(String ident, boolean isTypname) {
       boolean hasDot = ident.indexOf('.') != -1;
-      boolean isQuoted = ident.startsWith("\"") && ident.endsWith("\"");
-      boolean isCaseSensitive = !ident.equals(ident.toLowerCase());
-      boolean hasArraySuffix = ident.endsWith(ARRAY_SUFFIX);
-      return (hasDot || isQuoted || isCaseSensitive || hasArraySuffix) ? '"' + ident + '"' : ident;
+      boolean startsWithQuote = ident.startsWith("\"");
+      boolean hasArraySuffix = isTypname && ident.endsWith(ARRAY_SUFFIX);
+      return (hasDot || startsWithQuote || hasArraySuffix)
+          ? '"' + ident.replaceAll("\"", "\"\"") + '"' : ident;
     }
 
     String qualifiedName() {
-      return "\"" + nspname + "\".\"" + elementTypname + "\"" + arraySuffix();
+      return quote(nspname, false) + '.' + quote(elementTypname, true) + arraySuffix();
     }
 
     String onPathName() {
-      return quote(elementTypname) + arraySuffix();
+      return quote(elementTypname, true) + arraySuffix();
     }
 
     String cacheName() {
@@ -384,6 +386,13 @@ public class TypeInfoCache implements TypeInfo {
     }
   }
 
+  private synchronized void cacheInvalidTypeName(String nameString) {
+    _pgNameToOid.put(nameString, null);
+    // Legacy behavior is to return Types.OTHER on a failed database lookup, which is
+    // the outcome of an invalid typename.
+    _pgNameToSQLType.put(nameString, Types.OTHER);
+  }
+
   static class ParsedTypeName {
     private final String nspname;
     private final String typname;
@@ -391,67 +400,163 @@ public class TypeInfoCache implements TypeInfo {
     private final boolean isSimple;
 
     static ParsedTypeName fromString(String pgTypeName) {
-      boolean isArray = pgTypeName.endsWith(ARRAY_SUFFIX);
-      boolean hasQuote = pgTypeName.contains("\"");
-      int dotIndex = pgTypeName.indexOf('.');
+      try {
+        return parse(pgTypeName);
+      } catch (PSQLException e) {
+        return null;
+      }
+    }
 
-      if (dotIndex == -1 && !hasQuote && !isArray) {
-        return new ParsedTypeName(pgTypeName);
+    /*
+     * Parse the string representation of a possibly schema-qualified type name.
+     *
+     * Names and schemas require quoting only when needed to disambiguate name from schema, so only
+     * when a name part includes a dot. Name parts may be quoted in the input even when the quotes
+     * are not necessary. If a schema or name is quoted (regardless of whether such quoting is
+     * necessary), any quotes in the string must be double-quoted in a manner similar to
+     * PostgreSQL's `quote_ident` function.
+     *
+     * Examples:
+     *
+     *   input       | schema | type   | canonical representation
+     *  -------------|--------|--------|-------------------------
+     *   type        |        | type   | type
+     *   "type"      |        | type   | type
+     *   ty"pe       |        | ty"pe  | ty"pe
+     *   "t""ype"    |        | ty"pe  | ty"pe
+     *   ty.pe       | ty     | pe     | ty.pe
+     *   "ty.pe"     |        | ty.pe  | "ty.pe"
+     *   ns.type     | ns     | type   | ns.type
+     *   "ns"."type" | ns     | type   | ns.type
+     *   NS.TYPE     | NS     | TYPE   | NS.TYPE
+     *
+     */
+    private static ParsedTypeName parse(String nameString) throws PSQLException {
+      if (nameString.length() == 0) {
+        throw new PSQLException(GT.tr("string is not a valid identifier: \"{0}\"", nameString),
+            PSQLState.SYNTAX_ERROR);
       }
 
-      String fullName = isArray ? pgTypeName.substring(0, pgTypeName.length() - 2) : pgTypeName;
-      String schema;
-      String name;
+      if (nameString.indexOf('\0') != -1) {
+        throw new PSQLException(
+            GT.tr("string is not a valid identifier (must not contain null byte): \"{0}\"",
+                nameString),
+            PSQLState.SYNTAX_ERROR);
+      }
 
-      // simple use case
-      if (dotIndex == -1) {
-        schema = null;
-        name = fullName;
-      } else {
-        if (fullName.startsWith("\"")) {
-          if (fullName.endsWith("\"")) {
-            if (fullName.length() == 3) {
-              // type name string is dot-quote-dot (".")
-              schema = null;
-              name = fullName;
-            } else {
-              String[] parts = fullName.split("\"\\.\"");
-              schema = parts.length == 2 ? parts[0] + "\"" : null;
-              name = parts.length == 2 ? "\"" + parts[1] : parts[0];
+      boolean isArray = nameString.endsWith(ARRAY_SUFFIX);
+      String identifier = isArray ? nameString.substring(0, nameString.length() - 2) : nameString;
+
+      if (identifier.length() == 0) {
+        throw new PSQLException(GT.tr("string is not a valid identifier: \"{0}\"", nameString),
+            PSQLState.SYNTAX_ERROR);
+      }
+
+      ArrayList<String> nameParts = new ArrayList<>();
+
+      boolean missingIdent = true;
+      String remainder = identifier;
+      boolean isQuoted = false;
+
+      while (true) {
+        if (remainder.charAt(0) == '"') {
+          isQuoted = true;
+          int quoteIdx = 0;
+          String current = remainder.substring(1);
+          while (true) {
+            quoteIdx = remainder.indexOf('"', quoteIdx + 1);
+            if (quoteIdx == -1) {
+              // String has unclosed quotes.
+              throw new PSQLException(
+                  GT.tr("invalid type name: \"{0}\"", nameString),
+                  PSQLState.SYNTAX_ERROR);
             }
+            if (remainder.length() <= quoteIdx + 1) {
+              break;
+            }
+            if (remainder.charAt(quoteIdx + 1) != '"') {
+              break;
+            }
+            quoteIdx++;
+          }
+          remainder = remainder.substring(quoteIdx + 1);
+          String currentName = current.substring(0, quoteIdx - 1).replaceAll("\"\"", "\"");
+          if (currentName.length() == 0) {
+            throw new PSQLException(
+                GT.tr("invalid type name (quoted identifier must not be empty): \"{0}\"",
+                    nameString),
+                PSQLState.SYNTAX_ERROR);
+          }
+          nameParts.add(currentName);
+          missingIdent = false;
+        } else if (isIdentStart(remainder.charAt(0))) {
+          int charIdx = 1;
+          int length = remainder.length();
+          while (charIdx < length && isIdentContinuation(remainder.charAt(charIdx))) {
+            charIdx++;
+          }
+          String currentName = remainder.substring(0, charIdx);
+          nameParts.add(currentName);
+          remainder = remainder.substring(charIdx);
+          missingIdent = false;
+        }
+
+        if (missingIdent) {
+          if (remainder.charAt(0) == '.') {
+            throw new PSQLException(
+                GT.tr("invalid type name (no identifier before \".\"): \"{0}\"",
+                    nameString),
+                PSQLState.SYNTAX_ERROR);
           } else {
-            int lastDotIndex = fullName.lastIndexOf('.');
-            name = fullName.substring(lastDotIndex + 1);
-            schema = fullName.substring(0, lastDotIndex);
+            throw new PSQLException(
+                GT.tr("invalid type name: \"{0}\"", nameString),
+                PSQLState.SYNTAX_ERROR);
+          }
+        }
+
+        if (remainder.length() == 0) {
+          break;
+        } else if (remainder.charAt(0) == '.') {
+          remainder = remainder.substring(1);
+          if (remainder.length() == 0) {
+            throw new PSQLException(
+                GT.tr("invalid type name (no identifier after \".\"): \"{0}\"",
+                    nameString),
+                PSQLState.SYNTAX_ERROR);
           }
         } else {
-          schema = fullName.substring(0, dotIndex);
-          name = fullName.substring(dotIndex + 1);
+          throw new PSQLException(GT.tr("invalid type name: \"{0}\"", nameString),
+              PSQLState.SYNTAX_ERROR);
         }
       }
 
-      if (schema != null && schema.startsWith("\"") && schema.endsWith("\"")) {
-        int schemaLength = schema.length();
-        schema = (schemaLength == 1) ? schema : schema.substring(1, schema.length() - 1);
-      } else if (schema != null) {
-        schema = schema.toLowerCase();
+      int namePartCount = nameParts.size();
+
+      if (namePartCount == 1) {
+        return new ParsedTypeName(nameParts.get(0), isArray, isQuoted);
       }
 
-      if (name.startsWith("\"") && name.endsWith("\"")) {
-        int nameLength = name.length();
-        name = (nameLength == 1) ? name : name.substring(1, name.length() - 1);
-      } else {
-        name = name.toLowerCase();
+      if (namePartCount == 2) {
+        return new ParsedTypeName(nameParts.get(0), nameParts.get(1), isArray);
       }
 
-      return new ParsedTypeName(schema, name, isArray);
+      throw new PSQLException(GT.tr("invalid type name: \"{0}\"", nameString),
+          PSQLState.SYNTAX_ERROR);
     }
 
-    private ParsedTypeName(String typname) {
+    private static boolean isIdentStart(char c) {
+      return (c != '.' && c != '"');
+    }
+
+    private static boolean isIdentContinuation(char c) {
+      return (c != '.');
+    }
+
+    private ParsedTypeName(String typname, boolean isArray, boolean isQuoted) {
       this.nspname = null;
       this.typname = typname;
-      this.isArray = false;
-      this.isSimple = true;
+      this.isArray = isArray;
+      this.isSimple = !isQuoted;
     }
 
     private ParsedTypeName(String nspname, String typname, boolean isArray) {
@@ -506,6 +611,16 @@ public class TypeInfoCache implements TypeInfo {
       return i;
     }
 
+    ParsedTypeName typeName = ParsedTypeName.fromString(pgTypeName);
+    if (typeName == null) {
+      /*
+      Returning Types.OTHER for an invalid type name seems a bit odd, but it's consistent with legacy
+      behavior, in that an invalid type name wouldn't match anything in the database, in which case
+      we would return Types.OTHER. Here we just short-circuit a meaningless database fetch.
+      */
+      cacheInvalidTypeName(pgTypeName);
+      return Types.OTHER;
+    }
     /*
     This is a quick and dirty check based on the name only. We want to pass the type name string
     (pgTypeName) to fetchPgType so that the type name string is properly cached.
@@ -513,7 +628,6 @@ public class TypeInfoCache implements TypeInfo {
     We may not want to do this check anyway given the type may not exist, in which case we want to
     return java.sql.Types.OTHER. However, this is what the current behavior is.
      */
-    ParsedTypeName typeName = ParsedTypeName.fromString(pgTypeName);
     if (typeName.isArray()) {
       return Types.ARRAY;
     }
@@ -568,16 +682,15 @@ public class TypeInfoCache implements TypeInfo {
             + "  JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace"
             + "  LEFT JOIN pg_catalog.pg_type arr ON (arr.typelem, arr.typinput) = (t.oid, 'array_in'::regproc)"
             + "  LEFT JOIN pg_catalog.pg_type e ON t.typelem = e.oid"
-            + "  LEFT JOIN (SELECT s.r, (current_schemas(false))[r] AS nspname"
-            + "               FROM generate_series(1, array_upper(current_schemas(false), 1)) AS s (r)) AS sp"
+            + "  LEFT JOIN (SELECT s.r, (current_schemas(true))[r] AS nspname"
+            + "               FROM generate_series(1, array_upper(current_schemas(true), 1)) AS s (r)) AS sp"
             + "    USING (nspname)"
-            + " WHERE t.typname = ?"
+            + " WHERE t.typname = ? OR (t.typname = lower(?) AND nspname = 'pg_catalog')"
             + " ORDER BY sp.r, t.oid DESC LIMIT 1;";
         _getOidStatementSimple = _conn.prepareStatement(sql);
       }
-      // coerce to lower case to handle upper case type names
-      String lcName = typeName.typname().toLowerCase();
-      _getOidStatementSimple.setString(1, lcName);
+      _getOidStatementSimple.setString(1, typeName.typname());
+      _getOidStatementSimple.setString(2, typeName.typname());
       return _getOidStatementSimple;
     }
 
@@ -607,6 +720,27 @@ public class TypeInfoCache implements TypeInfo {
   }
 
   private PreparedStatement getArrayOidStatement(ParsedTypeName typeName) throws SQLException {
+    if (typeName.isSimple()) {
+      if (_getOidStatementSimpleArray == null) {
+        String sql = "SELECT arr.oid, n.nspname = ANY(current_schemas(true)), n.nspname,"
+            + " TRUE, arr.typname, arr.typelem, arr.typtype, arr.typdelim,"
+            + " e.typname, e.typtype, e.typdelim, arr.oid, arr.typname"
+            + "  FROM pg_catalog.pg_type e"
+            + "  JOIN pg_catalog.pg_namespace n ON e.typnamespace = n.oid"
+            + "  JOIN pg_catalog.pg_type arr ON (arr.typelem, arr.typinput) = (e.oid, 'array_in'::regproc)"
+            + "  LEFT JOIN (SELECT s.r, (current_schemas(true))[r] AS nspname"
+            + "               FROM generate_series(1, array_upper(current_schemas(true), 1)) AS s (r)) AS sp"
+            + "    USING (nspname)"
+            + " WHERE (e.typname = ? AND n.nspname = ANY(current_schemas(true)))"
+            + "       OR (e.typname = lower(?) AND n.nspname = 'pg_catalog')"
+            + " ORDER BY sp.r LIMIT 1";
+        _getOidStatementSimpleArray = _conn.prepareStatement(sql);
+      }
+      _getOidStatementSimpleArray.setString(1, typeName.typname());
+      _getOidStatementSimpleArray.setString(2, typeName.typname());
+      return _getOidStatementSimpleArray;
+    }
+
     PreparedStatement oidStatementComplex;
     if (_getOidStatementComplexArray == null) {
       String sql;
@@ -646,6 +780,10 @@ public class TypeInfoCache implements TypeInfo {
 
   private synchronized PgType fetchPgType(String pgTypeName) throws SQLException {
     ParsedTypeName typeName = ParsedTypeName.fromString(pgTypeName);
+    if (typeName == null) {
+      cacheInvalidTypeName(pgTypeName);
+      return null;
+    }
     PreparedStatement oidStatement = typeName.isArray()
         ? getArrayOidStatement(typeName) : getOidStatement(typeName);
 

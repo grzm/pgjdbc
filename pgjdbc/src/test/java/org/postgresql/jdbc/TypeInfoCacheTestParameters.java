@@ -10,8 +10,10 @@ import static org.postgresql.jdbc.TypeInfoCacheTestUtil.PgTypeStructType;
 import static org.postgresql.jdbc.TypeInfoCacheTestUtil.quotify;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 
 /**
  * Many of the TypeInfoCache tests are parameterized, and rely on a common set of data. Some of that
@@ -56,6 +58,7 @@ class TypeInfoCacheTestParameters {
       add(PgTypeStruct.createQuotified("ns", "%"));
       add(PgTypeStruct.createQuotified("ns", "."));
       add(PgTypeStruct.createQuotified("n%%.%%s%%", "%%ty%%.%%pe%%"));
+      add(PgTypeStruct.createQuotified("%n%%.%%s%%%", "%%ty%%.%%pe%%"));
       add(PgTypeStruct.createQuotified("n%%s", "%%type%%"));
       add(PgTypeStruct.createQuotified("n%.%s%", "%ty%.%pe%"));
       add(PgTypeStruct.createQuotified("n%s", "%type%"));
@@ -64,6 +67,7 @@ class TypeInfoCacheTestParameters {
       add(PgTypeStruct.createQuotified("N%S", "%type%"));
       add(PgTypeStruct.createQuotified("ns", "ty.pe"));
       add(PgTypeStruct.createQuotified("ns.ty", "pe"));
+      add(PgTypeStruct.createQuotified("ns", "%ty.pe%"));
 
       add(PgTypeStruct.createQuotified("%NS%", "%TYPE%"));
       add(PgTypeStruct.createQuotified("%%NS%%", "%%TYPE%%"));
@@ -81,6 +85,7 @@ class TypeInfoCacheTestParameters {
       add(PgTypeStruct.createQuotified("NS", "type"));
       add(PgTypeStruct.createQuotified("NS", "type[]"));
       add(PgTypeStruct.createQuotified("ns", "%TYPE[]%"));
+      add(PgTypeStruct.createQuotified("ns", "%type[]%"));
       add(PgTypeStruct.createQuotified("ns", "%type%"));
       add(PgTypeStruct.createQuotified("ns", "TYPE[]"));
       add(PgTypeStruct.createQuotified("ns", "type"));
@@ -121,26 +126,7 @@ class TypeInfoCacheTestParameters {
     }
   }
 
-  static final HashMap<PgTypeStruct, PgTypeStruct> badRoundTripTypes =
-      new HashMap<PgTypeStruct, PgTypeStruct>() {
-        {
-          put(PgTypeStruct.createQuotified("%", "%."), PgTypeStruct.UNSPECIFIED);
-
-          put(PgTypeStruct.createQuotified(".", "%"),
-              PgTypeStruct.createQuotified("%", ".%%"));
-
-          put(PgTypeStruct.createQuotified(".", "."),
-              PgTypeStruct.createQuotified("%", "%."));
-
-          put(PgTypeStruct.createQuotified("public", "%.%"), PgTypeStruct.UNSPECIFIED);
-
-          put(PgTypeStruct.createQuotified("n%%.%%s%%", "%%ty%%.%%pe%%"),
-              PgTypeStruct.createQuotified("public", "n"));
-
-          put(PgTypeStruct.createQuotified("n%.%s%", "%ty%.%pe%"),
-              PgTypeStruct.createQuotified("public", "%n"));
-        }
-      };
+  static final HashMap<PgTypeStruct, PgTypeStruct> badRoundTripTypes = new HashMap<>();
 
   private static Iterable<Object[]> getPGTypeByNameParams() {
     Collection<Object[]> cases = new ArrayList<>();
@@ -221,25 +207,19 @@ class TypeInfoCacheTestParameters {
         new Object[]{"integer", PgTypeStruct.UNSPECIFIED, new PgTypeStruct("pg_catalog", "int4")});
     cases.add(
         new Object[]{"INT", PgTypeStruct.UNSPECIFIED, new PgTypeStruct("pg_catalog", "int4")});
-
-    /*
-     sp.text is shadowing pg_catalog.text. Lower-case "text" matches pg_catalog.text because
-     it's cached when TypeInfoCache is instantiated via addCoreType
-     */
-    cases.add(new Object[]{"TEXT",
-        PgTypeStruct.createWithSearchPathException("pg_catalog", "text", "sp")});
+    cases.add(new Object[]{"TEXT", PgTypeStruct.createQuotified("pg_catalog", "text")});
 
     // edge cases
     cases.add(new Object[]{" ", PgTypeStruct.createQuotified("public", " ")});
     cases.add(new Object[]{"", PgTypeStruct.UNSPECIFIED}); // empty string
     cases.add(new Object[]{"% %", PgTypeStruct.createQuotified("public", " ")});
-    cases.add(new Object[]{"%", PgTypeStruct.createQuotified("public", "%")});
+    cases.add(new Object[]{"%", PgTypeStruct.UNSPECIFIED});
     cases.add(new Object[]{"%%", PgTypeStruct.UNSPECIFIED}); // "%%" parses as (null, "")
-    cases.add(new Object[]{"%%%", PgTypeStruct.createQuotified("public", "%")});
-    cases.add(new Object[]{"%%%%", PgTypeStruct.createQuotified("public", "%%")});
+    cases.add(new Object[]{"%%%", PgTypeStruct.UNSPECIFIED});
+    cases.add(new Object[]{"%%%%", PgTypeStruct.createQuotified("public", "%")});
     cases.add(new Object[]{"%.%", PgTypeStruct.createQuotified("public", ".")});
     cases.add(new Object[]{"%.%.", PgTypeStruct.UNSPECIFIED}); // "%.%." parses as ("", "..")
-    cases.add(new Object[]{"%.%.%.%", PgTypeStruct.createQuotified("%", "%.")});
+    cases.add(new Object[]{"%.%.%.%", PgTypeStruct.createQuotified(".", ".")});
     cases.add(new Object[]{".", PgTypeStruct.UNSPECIFIED});    // "." parses as ("", "")
     cases.add(new Object[]{".%.%", PgTypeStruct.UNSPECIFIED}); // ".%.%" parses as ("", "%.%")
     cases.add(new Object[]{"..", PgTypeStruct.UNSPECIFIED});   // ".." parses as ("", ".")
@@ -249,38 +229,37 @@ class TypeInfoCacheTestParameters {
     // quotes are stripped
     cases.add(new Object[]{"%TYPE%", PgTypeStruct.createQuotified("public", "TYPE")});
     cases.add(new Object[]{"%TYPE[]%", PgTypeStruct.createQuotified("public", "TYPE[]")});
-    cases.add(new Object[]{"%%TYPE[]%%", PgTypeStruct.createQuotified("public", "%TYPE[]%")});
+    cases.add(new Object[]{"%%TYPE[]%%", PgTypeStruct.UNSPECIFIED});
     cases.add(new Object[]{"%type%", PgTypeStruct.createQuotified("public", "type")});
+    cases.add(new Object[]{"%%%ns%", PgTypeStruct.createQuotified("public", "%ns")});
 
     cases.add(new Object[]{"type", PgTypeStruct.createQuotified("public", "type")});
-    // unquoted type names are case-folded
-    cases.add(new Object[]{"TYPE", PgTypeStruct.createQuotified("public", "type")});
-    cases.add(new Object[]{"%NS.%TYPE%", PgTypeStruct.createQuotified("public", "NS.%TYPE")});
+    cases.add(new Object[]{"TYPE", PgTypeStruct.createQuotified("public", "TYPE")});
+    cases.add(new Object[]{"%NS.%TYPE%", PgTypeStruct.UNSPECIFIED});
 
     // qualified
     cases.add(new Object[]{"%NS%.%TYPE%", PgTypeStruct.createQuotified("NS", "TYPE")});
-    cases.add(new Object[]{"%%NS%%.%%TYPE%%", PgTypeStruct.createQuotified("%NS%", "%TYPE%")});
-    cases.add(new Object[]{"%%%NS%%%.%%%TYPE%%%", PgTypeStruct.createQuotified("%%NS%%", "%%TYPE%%")});
+    cases.add(new Object[]{"%%NS%%.%%TYPE%%", PgTypeStruct.UNSPECIFIED});
+    cases.add(new Object[]{"%%%NS%%%.%%%TYPE%%%", PgTypeStruct.createQuotified("%NS%", "%TYPE%")});
     cases.add(new Object[]{"%NS%.%TYPE[]%", PgTypeStruct.createQuotified("NS", "TYPE[]")});
-    cases.add(new Object[]{"%NS%.%%TYPE[]%%", PgTypeStruct.createQuotified("NS", "%TYPE[]%")});
-    cases.add(new Object[]{"%NS%.%%%TYPE[]%%%", PgTypeStruct.createQuotified("NS", "%%TYPE[]%%")});
+    cases.add(new Object[]{"%NS%.%%TYPE[]%%", PgTypeStruct.UNSPECIFIED});
+    cases.add(new Object[]{"%NS%.%%%TYPE[]%%%", PgTypeStruct.createQuotified("NS", "%TYPE[]%")});
     cases.add(new Object[]{"%ns%.%type%", PgTypeStruct.createQuotified("ns", "type")});
 
-    // unquoted type names are is case-folded
-    cases.add(new Object[]{"NS.TYPE", PgTypeStruct.createQuotified("ns", "type")});
+    // unquoted type names are not case-folded
+    cases.add(new Object[]{"NS.TYPE", PgTypeStruct.createQuotified("NS", "TYPE")});
     cases.add(new Object[]{"ns.%type[]%", PgTypeStruct.createQuotified("ns", "type[]")});
     cases.add(new Object[]{"ns.type", PgTypeStruct.createQuotified("ns", "type")});
 
-    cases.add(new Object[]{"ns.ty.pe", PgTypeStruct.createQuotified("ns", "ty.pe")});
+    cases.add(new Object[]{"ns.ty.pe", PgTypeStruct.UNSPECIFIED});
     cases.add(new Object[]{"n%s.%type%", PgTypeStruct.createQuotified("n%s", "type")});
-    cases.add(new Object[]{"N%S.type", PgTypeStruct.createQuotified("n%s", "type")});
-    cases.add(new Object[]{"%n%s%.%%type%%", PgTypeStruct.createQuotified("n%s", "%type%")});
-    cases.add(new Object[]{"%n%%s%.%%%type%%%", PgTypeStruct.createQuotified("n%%s", "%%type%%")});
+    cases.add(new Object[]{"N%S.type", PgTypeStruct.createQuotified("N%S", "type")});
+    cases.add(new Object[]{"%n%s%.%%type%%", PgTypeStruct.UNSPECIFIED});
+    cases.add(new Object[]{"%n%%s%.%%%type%%%", PgTypeStruct.createQuotified("n%s", "%type%")});
 
-    // bad parsing
     cases.add(
-        new Object[]{"%n%%.%%s%%%.%%%ty%%.%%pe%%%", PgTypeStruct.createQuotified("public", "n")});
-    cases.add(new Object[]{"%ns%.%ty%.%pe%", PgTypeStruct.createQuotified("public", "%ns")});
+        new Object[]{"%n%%.%%s%%%.%%%ty%%.%%pe%%%", PgTypeStruct.createQuotified("n%.%s%", "%ty%.%pe%")});
+    cases.add(new Object[]{"%ns%.%ty%.%pe%", PgTypeStruct.UNSPECIFIED});
 
     Collection<Object[]> params = new ArrayList<>();
     for (Object[] c : cases) {
@@ -349,34 +328,34 @@ class TypeInfoCacheTestParameters {
     cases.add(new Object[]{new PgTypeStruct("pg_catalog", "int4"), "int4", "int4[]"});
 
     cases.add(new Object[]{PgTypeStruct.createQuotified("public", " "), " ", " []"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%%"), "%%%%", "%%%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%%%"), "%%%%%", "%%%%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%%%%"), "%%%%%%", "%%%%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%%"), "%%%%%%", "%%%%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%%%"), "%%%%%%%%", "%%%%%%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%%%%"), "%%%%%%%%%%", "%%%%%%%%%%[]"});
     cases.add(new Object[]{PgTypeStruct.createQuotified("public", "."), "%.%", "%.%[]"});
 
-    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%TYPE[]%"), "%%TYPE[]%%", "%%TYPE[]%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%type[]%"), "%%type[]%%", "%%type[]%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "TYPE"), "%TYPE%", "%TYPE%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%TYPE[]%"), "%%%TYPE[]%%%", "%%%TYPE[]%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%type[]%"), "%%%type[]%%%", "%%%type[]%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "TYPE"), "TYPE", "TYPE[]"});
     cases.add(new Object[]{PgTypeStruct.createQuotified("public", "TYPE[]"), "%TYPE[]%", "%TYPE[]%[]"});
     cases.add(new Object[]{PgTypeStruct.createQuotified("public", "type"), "type", "type[]"});
     cases.add(new Object[]{PgTypeStruct.createQuotified("public", "type[]"), "%type[]%", "%type[]%[]"});
 
-    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", " "), "%ns%.% %", "%ns%.% %[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "."), "%ns%.%.%", "%ns%.%.%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", " "), "ns. ", "ns. []"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "."), "ns.%.%", "ns.%.%[]"});
 
-    cases.add(new Object[]{PgTypeStruct.createQuotified("%NS%", "%TYPE%"), "%%NS%%.%%TYPE%%", "%%NS%%.%%TYPE%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("%NS%", "%TYPE[]%"), "%%NS%%.%%TYPE[]%%", "%%NS%%.%%TYPE[]%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("%ns%", "%type[]%"), "%%ns%%.%%type[]%%", "%%ns%%.%%type[]%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "%TYPE[]%"), "%NS%.%%TYPE[]%%", "%NS%.%%TYPE[]%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "%type[]%"), "%NS%.%%type[]%%", "%NS%.%%type[]%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "TYPE"), "%NS%.%TYPE%", "%NS%.%TYPE%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "TYPE[]"), "%NS%.%TYPE[]%", "%NS%.%TYPE[]%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "type"), "%NS%.%type%", "%NS%.%type%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "type[]"), "%NS%.%type[]%", "%NS%.%type[]%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "%TYPE[]%"), "%ns%.%%TYPE[]%%", "%ns%.%%TYPE[]%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "TYPE[]"), "%ns%.%TYPE[]%", "%ns%.%TYPE[]%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "type"), "%ns%.%type%", "%ns%.%type%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "type[]"), "%ns%.%type[]%", "%ns%.%type[]%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("%NS%", "%TYPE%"), "%%%NS%%%.%%%TYPE%%%", "%%%NS%%%.%%%TYPE%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("%NS%", "%TYPE[]%"), "%%%NS%%%.%%%TYPE[]%%%", "%%%NS%%%.%%%TYPE[]%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("%ns%", "%type[]%"), "%%%ns%%%.%%%type[]%%%", "%%%ns%%%.%%%type[]%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "%TYPE[]%"), "NS.%%%TYPE[]%%%", "NS.%%%TYPE[]%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "%type[]%"), "NS.%%%type[]%%%", "NS.%%%type[]%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "TYPE"), "NS.TYPE", "NS.TYPE[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "TYPE[]"), "NS.%TYPE[]%", "NS.%TYPE[]%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "type"), "NS.type", "NS.type[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "type[]"), "NS.%type[]%", "NS.%type[]%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "%TYPE[]%"), "ns.%%%TYPE[]%%%", "ns.%%%TYPE[]%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "TYPE[]"), "ns.%TYPE[]%", "ns.%TYPE[]%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "type"), "ns.type", "ns.type[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "type[]"), "ns.%type[]%", "ns.%type[]%[]"});
 
     Collection<Object[]> params = new ArrayList<>();
     for (Object[] c : cases) {
@@ -425,34 +404,34 @@ class TypeInfoCacheTestParameters {
     cases.add(new Object[]{new PgTypeStruct("pg_catalog", "int2"), "int2", "int2[]"});
     cases.add(new Object[]{new PgTypeStruct("pg_catalog", "int4"), "int4", "int4[]"});
 
-    cases.add(new Object[]{PgTypeStruct.createQuotified("%", "%"), "%%%.%%%", "%%%.%%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("%", "."), "%%%.%.%", "%%%.%.%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified(".", "%"), "%.%.%%%", "%.%.%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("%", "%"), "%%%%.%%%%", "%%%%.%%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("%", "."), "%%%%.%.%", "%%%%.%.%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified(".", "%"), "%.%.%%%%", "%.%.%%%%[]"});
     cases.add(new Object[]{PgTypeStruct.createQuotified(".", "."), "%.%.%.%", "%.%.%.%[]"});
 
-    cases.add(new Object[]{PgTypeStruct.createQuotified("n%%.%%s%%", "%%ty%%.%%pe%%"),"%n%%.%%s%%%.%%%ty%%.%%pe%%%", "%n%%.%%s%%%.%%%ty%%.%%pe%%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("n%%s", "%%type%%"), "%n%%s%.%%%type%%%","%n%%s%.%%%type%%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("n%.%s%", "%ty%.%pe%"), "%n%.%s%%.%%ty%.%pe%%", "%n%.%s%%.%%ty%.%pe%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("n%s", "%type%"), "%n%s%.%%type%%", "%n%s%.%%type%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("n%s", "type"), "%n%s%.%type%", "%n%s%.%type%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", " "), "%ns%.% %", "%ns%.% %[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "%"), "%ns%.%%%", "%ns%.%%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "."), "%ns%.%.%", "%ns%.%.%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "ty.pe"), "%ns%.%ty.pe%", "%ns%.%ty.pe%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("n%%.%%s%%", "%%ty%%.%%pe%%"),"%n%%%%.%%%%s%%%%%.%%%%%ty%%%%.%%%%pe%%%%%", "%n%%%%.%%%%s%%%%%.%%%%%ty%%%%.%%%%pe%%%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("n%%s", "%%type%%"), "n%%s.%%%%%type%%%%%","n%%s.%%%%%type%%%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("n%.%s%", "%ty%.%pe%"), "%n%%.%%s%%%.%%%ty%%.%%pe%%%", "%n%%.%%s%%%.%%%ty%%.%%pe%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("n%s", "%type%"), "n%s.%%%type%%%", "n%s.%%%type%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("n%s", "type"), "n%s.type", "n%s.type[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", " "), "ns. ", "ns. []"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "%"), "ns.%%%%", "ns.%%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "."), "ns.%.%", "ns.%.%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "ty.pe"), "ns.%ty.pe%", "ns.%ty.pe%[]"});
 
-    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "TYPE"), "%NS%.%TYPE%", "%NS%.%TYPE%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "type"), "%ns%.%type%", "%ns%.%type%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "TYPE"), "NS.TYPE", "NS.TYPE[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "type"), "ns.type", "ns.type[]"});
 
     cases.add(new Object[]{PgTypeStruct.createQuotified("public", " "), " ", " []"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%"), "%%%", "%%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%%"), "%%%%", "%%%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%%%"), "%%%%%", "%%%%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%%%%"), "%%%%%%", "%%%%%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%.%"), "%%.%%", "%%.%%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%ns"), "%ns", "%ns[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%"), "%%%%", "%%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%%"), "%%%%%%", "%%%%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%%%"), "%%%%%%%%", "%%%%%%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%%%%"), "%%%%%%%%%%", "%%%%%%%%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%.%"), "%%%.%%%", "%%%.%%%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "%ns"), "%%%ns%", "%%%ns%[]"});
     cases.add(new Object[]{PgTypeStruct.createQuotified("public", "."), "%.%", "%.%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "NS.%TYPE"), "%NS.%TYPE%", "%NS.%TYPE%[]"});
-    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "TYPE"), "%TYPE%", "%TYPE%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "NS.%TYPE"), "%NS.%%TYPE%", "%NS.%%TYPE%[]"});
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "TYPE"), "TYPE", "TYPE[]"});
     cases.add(new Object[]{PgTypeStruct.createQuotified("public", "type"), "type", "type[]"});
 
     Collection<Object[]> params = new ArrayList<>();
@@ -468,4 +447,105 @@ class TypeInfoCacheTestParameters {
     }
     return params;
   }
+
+  static Iterable<Object[]> parseableParsingParams() {
+    Collection<Object[]> cases = new ArrayList<>();
+    cases.add(
+        new Object[]{PgTypeStruct.createQuotified("pg_catalog", "text"), "pg_catalog.text", "text",
+            new ArrayList<Object[]>() {
+              {
+                add(new Object[]{"pg_catalog.text", false});
+                add(new Object[]{"%text%", true});
+              }
+            }
+        });
+
+    cases.add(new Object[]{PgTypeStruct.createQuotified("pg_catalog", "int4"), "pg_catalog.int4",
+        "int4"});
+
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "text"), "public.text", "text"});
+
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "TEXT"), "public.TEXT", "TEXT"});
+
+    cases.add(new Object[]{PgTypeStruct.createQuotified("public", "."), "public.%.%", "%.%"});
+
+    cases.add(
+        new Object[]{PgTypeStruct.createQuotified("public", "%.%"), "public.%%%.%%%", "%%%.%%%"});
+
+    cases.add(new Object[]{PgTypeStruct.createQuotified(".", "."), "%.%.%.%", "%.%"});
+
+    cases.add(new Object[]{PgTypeStruct.createQuotified("%", "%"), "%%%%.%%%%", "%%%%"});
+
+    cases.add(
+        new Object[]{PgTypeStruct.createQuotified("%.%", "%.%"), "%%%.%%%.%%%.%%%", "%%%.%%%"});
+
+    cases.add(new Object[]{PgTypeStruct.createQuotified("ns", "type"), "ns.type", "type"});
+
+    cases.add(new Object[]{PgTypeStruct.createQuotified("NS", "TYPE"), "NS.TYPE", "TYPE"});
+
+    cases.add(
+        new Object[]{PgTypeStruct.createQuotified("n.s", "ty.pe"), "%n.s%.%ty.pe%", "%ty.pe%"});
+
+    cases.add(
+        new Object[]{PgTypeStruct.createQuotified("ns[]", "type[]"), "ns[].%type[]%", "%type[]%"});
+
+    cases.add(new Object[]{PgTypeStruct.createQuotified("%ns%", "%type%"), "%%%ns%%%.%%%type%%%",
+        "%%%type%%%"});
+
+    cases.add(new Object[]{PgTypeStruct.createQuotified("n%s", "ty%pe"), "n%s.ty%pe", "ty%pe"});
+
+    cases.add(
+        new Object[]{PgTypeStruct.createQuotified("%n%s%", "%ty%pe%"), "%%%n%%s%%%.%%%ty%%pe%%%",
+            "%%%ty%%pe%%%"});
+
+    cases.add(
+        new Object[]{PgTypeStruct.createQuotified("n%.%s", "ty%.%pe"), "%n%%.%%s%.%ty%%.%%pe%",
+            "%ty%%.%%pe%"});
+
+    Collection<Object[]> params = new ArrayList<>();
+    for (Object[] c : cases) {
+      PgTypeStruct type = (PgTypeStruct) c[0];
+      String qualifiedName = quotify((String) c[1]);
+      String onPathName = quotify((String) c[2]);
+      ArrayList<Object[]> nameStrings = new ArrayList<>();
+      ArrayList<Object[]> arrayNameStrings = new ArrayList<>();
+      if (c.length > 3) {
+        for (Object[] nameString : (ArrayList<Object[]>) c[3]) {
+          String quoted = quotify((String) nameString[0]);
+          boolean onPath = (boolean) nameString[1];
+          nameStrings.add(new Object[]{quoted, onPath});
+          arrayNameStrings.add(new Object[]{quoted + "[]", onPath});
+        }
+      }
+      params.add(new Object[]{type, qualifiedName, onPathName, nameStrings});
+      params.add(
+          new Object[]{PgTypeStruct.createArrayType(type), qualifiedName + "[]", onPathName + "[]",
+              arrayNameStrings});
+    }
+    return params;
+  }
+
+  static Iterable<Object[]> unparseableParsingParams() {
+    List<String> unparseableNameStrings = Arrays.asList(
+        "",
+        "%" + '\0' + "%",
+        "%%",
+        "%.%.",
+        "%.%.[]",
+        ". ",
+        ".",
+        ".[]",
+        "[]",
+        "%ns",
+        "db.ns.type",
+        "ty" + '\0' + "pe",
+        Character.toString('\0')
+    );
+    Collection<Object[]> cases = new ArrayList<>();
+    for (String s : unparseableNameStrings) {
+      cases.add(new Object[]{quotify(s)});
+    }
+    return cases;
+  }
+
 }

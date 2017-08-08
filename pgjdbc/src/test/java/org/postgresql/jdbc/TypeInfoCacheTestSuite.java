@@ -26,7 +26,10 @@ import org.junit.runners.Suite.SuiteClasses;
     TypeInfoCacheGetPGTypeUnparseableNameTest.class,
     TypeInfoCacheGetSQLTypeSearchPathTest.class,
     TypeInfoCacheGetSQLTypeTest.class,
-    TypeInfoCacheGetTypeForAliasTest.class
+    TypeInfoCacheGetTypeForAliasTest.class,
+    TypeInfoCacheParsedTypeNameFromStringTest.class,
+    TypeInfoCacheParsedTypeNameFromStringUnparseableTest.class,
+    TypeInfoCachePgTypeQuotingTest.class
 })
 
 public class TypeInfoCacheTestSuite {

@@ -11,6 +11,8 @@ import static org.junit.Assume.assumeTrue;
 
 import org.postgresql.core.Oid;
 import org.postgresql.core.ServerVersion;
+import org.postgresql.jdbc.TypeInfoCache.ParsedTypeName;
+import org.postgresql.jdbc.TypeInfoCache.PgType;
 import org.postgresql.test.TestUtil;
 
 import java.sql.Connection;
@@ -102,21 +104,38 @@ class TypeInfoCacheTestUtil {
       return new PgTypeStruct(type.nspname, type.typname, PgTypeStructType.ARRAY);
     }
 
-    /**
-     * For testing cases where TypeInfoCache's legacy search path behavior is important. See
-     * getPGType(String) for details
-     */
-    @SuppressWarnings("SameParameterValue")
-    static PgTypeStruct createWithSearchPathException(String nspname, String typname,
-        String exceptionNspname) {
-      return new PgTypeStruct(nspname, typname, exceptionNspname);
-    }
-
     private PgTypeStruct(String nspname, String typname, String searchPathException) {
       this.nspname = nspname;
       this.typname = typname;
       this.type = PgTypeStructType.ELEMENT;
       this.searchPathException = new PgTypeStruct(searchPathException, this.typname, this.type);
+    }
+
+    PgTypeStruct(ParsedTypeName typeName) {
+      this(typeName.nspname(), typeName.typname(), typeName.isArray() ? PgTypeStructType.ARRAY : PgTypeStructType.ELEMENT);
+    }
+
+    static PgTypeStruct createOnPath(PgTypeStruct type) {
+      return new PgTypeStruct(null, type.typname, type.type);
+    }
+
+    private static final int FAKE_ARRAY_OID = 2;
+    private static final int FAKE_ELEMENT_OID = 3;
+    private static final char FAKE_TYPTYPE = 'c';
+    private static final char FAKE_DELIMITER  = ',';
+
+    PgType toPgType() {
+      final boolean onPath = nspname == null;
+      final String elementTypname = typname;
+      final String arrayTypname = typname;
+      if (type.isElement) {
+        return PgType.createElement(nspname, onPath,
+            FAKE_ELEMENT_OID, elementTypname, FAKE_TYPTYPE, FAKE_DELIMITER,
+            FAKE_ARRAY_OID, arrayTypname);
+      }
+      return PgType.createArray(nspname, onPath,
+          FAKE_ELEMENT_OID, elementTypname, FAKE_TYPTYPE, FAKE_DELIMITER,
+          FAKE_ARRAY_OID, arrayTypname);
     }
 
     boolean hasSearchPathException() {
@@ -135,9 +154,8 @@ class TypeInfoCacheTestUtil {
     }
 
     String name() {
-      return (nspname.equals("pg_catalog") ? typname :
-          (nspname == null ? "" : '"' + nspname + "\".") + '"'
-              + typname + '"') + (type.isElement ? "" : "[]");
+      return ((nspname == null || nspname.equals("pg_catalog")) ? "" : nspname + '.')
+          + typname + (type.isElement ? "" : "[]");
     }
 
     static final PgTypeStruct UNPARSEABLE =
