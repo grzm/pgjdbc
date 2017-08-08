@@ -64,16 +64,10 @@ public class TypeInfoCacheGetPGTypeSearchPathTest extends BaseTest4 {
     Each case is: types, search path schemas, and a map of type name strings to the
     PgTypeStruct instance it should match, with PgTypeStruct.UNSPECIFIED for no match.
 
-    Notes:
-    1. ParsedTypeName.fromString lowers unquoted type names, so type name string "NS.TYPE" will be
-       parsed as (nspname, typname) = ('ns', 'type'), and type name string "TYPE" will be parsed as
-       the unqualified type (typname) = ('type'). This accounts for matching the lowered type names.
-
-    2. getPGType special-cases unqualified, unquoted type names. If these two conditions are met,
-       the type name will be looked up *without regard to the search_path*, matching the most recently
-       created type with that name. This is *not* how the type would normally be found if used in a
-       query. getPGArrayType does not exhibit this behavior.
-
+    Note:
+    ParsedTypeName.fromString lowers unquoted type names, so type name string "NS.TYPE" will be
+    parsed as (nspname, typname) = ('ns', 'type'), and type name string "TYPE" will be parsed as
+    the unqualified type (typname) = ('type'). This accounts for matching the lowered type names.
      */
 
     // baseline
@@ -90,9 +84,6 @@ public class TypeInfoCacheGetPGTypeSearchPathTest extends BaseTest4 {
         },
     });
 
-    /*
-     TEXT matches public because it's simple and lowered on search.
-    */
     cases.add(new Object[]{
         new PgTypeStruct[]{new PgTypeStruct("pg_catalog", "text"),
             new PgTypeStruct("public", "text")},
@@ -101,14 +92,11 @@ public class TypeInfoCacheGetPGTypeSearchPathTest extends BaseTest4 {
           {
             put("text", new PgTypeStruct("pg_catalog", "text"));
             put("%text%", new PgTypeStruct("pg_catalog", "text"));
-            put("TEXT", Arrays.asList(
-                new PgTypeStruct("public", "text"),
-                new PgTypeStruct("pg_catalog", "text")));
+            put("TEXT", new PgTypeStruct("pg_catalog", "text"));
             put("%TEXT%", PgTypeStruct.UNSPECIFIED);
           }
         },
     });
-
 
     // only quoted %TEXT% matches public.TEXT
     cases.add(new Object[]{
@@ -125,7 +113,11 @@ public class TypeInfoCacheGetPGTypeSearchPathTest extends BaseTest4 {
     });
 
     /*
-     With schema a on the search path, a.type is selected instead of x.type.
+     The following three tests are to confirm a legacy bug is fixed. Types were matched even when
+     they were not on the search path.
+     For details, see
+       - https://github.com/pgjdbc/pgjdbc/commit/818b84d28ac33cdc538fbfd4ccb6c6287d2003da
+       - https://github.com/pgjdbc/pgjdbc/commit/b383f6d2c8f19e2b5b867039ca96071ba8d495e1
      */
     cases.add(new Object[]{
         new PgTypeStruct[]{
@@ -141,9 +133,6 @@ public class TypeInfoCacheGetPGTypeSearchPathTest extends BaseTest4 {
         },
     });
 
-    /*
-    Even though x is not on the path, it's matched anyway. This is a legacy bug.
-     */
     cases.add(new Object[]{
         new PgTypeStruct[]{
             new PgTypeStruct("x", "type")
@@ -151,16 +140,11 @@ public class TypeInfoCacheGetPGTypeSearchPathTest extends BaseTest4 {
         DEFAULT_SEARCH_PATH,
         new HashMap<String, Object>() {
           {
-            // "type" matches (x, type), "type[]" matches UNSPECIFIED
-            put("type", Arrays.asList(new PgTypeStruct("x", "type"), PgTypeStruct.UNSPECIFIED));
+            put("type", PgTypeStruct.UNSPECIFIED);
             put("%type%", PgTypeStruct.UNSPECIFIED);
           }
         },
     });
-    /*
-    Even though neither a.type nor x.type are on the path, x.type is matched as it has a higher oid
-    (it was created after a.type).
-     */
     cases.add(new Object[]{
         new PgTypeStruct[]{
             new PgTypeStruct("a", "type"),
@@ -169,8 +153,7 @@ public class TypeInfoCacheGetPGTypeSearchPathTest extends BaseTest4 {
         DEFAULT_SEARCH_PATH,
         new HashMap<String, Object>() {
           {
-            // "type" matches (x, type), "type[]" matches UNSPECIFIED
-            put("type", Arrays.asList(new PgTypeStruct("x", "type"), PgTypeStruct.UNSPECIFIED));
+            put("type", PgTypeStruct.UNSPECIFIED);
           }
         },
     });

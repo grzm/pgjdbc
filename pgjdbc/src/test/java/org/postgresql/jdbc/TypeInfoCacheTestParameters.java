@@ -221,13 +221,7 @@ class TypeInfoCacheTestParameters {
         new Object[]{"integer", PgTypeStruct.UNSPECIFIED, new PgTypeStruct("pg_catalog", "int4")});
     cases.add(
         new Object[]{"INT", PgTypeStruct.UNSPECIFIED, new PgTypeStruct("pg_catalog", "int4")});
-
-    /*
-     sp.text is shadowing pg_catalog.text. Lower-case "text" matches pg_catalog.text because
-     it's cached when TypeInfoCache is instantiated via addCoreType
-     */
-    cases.add(new Object[]{"TEXT",
-        PgTypeStruct.createWithSearchPathException("pg_catalog", "text", "sp")});
+    cases.add(new Object[]{"TEXT", new PgTypeStruct("pg_catalog", "text")});
 
     // edge cases
     cases.add(new Object[]{" ", PgTypeStruct.createQuotified("public", " ")});
