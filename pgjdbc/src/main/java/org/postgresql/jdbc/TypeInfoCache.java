@@ -162,6 +162,7 @@ public class TypeInfoCache implements TypeInfo {
     _arrayOidToDelimiter.put(arrayOid, DEFAULT_DELIMITER);
 
     String pgArrayTypeName = pgTypeName + ARRAY_SUFFIX;
+    _oidToPgName.put(arrayOid, pgArrayTypeName);
     _pgNameToJavaClass.put(pgArrayTypeName, JAVA_SQL_ARRAY);
     _oidToJavaClass.put(arrayOid, JAVA_SQL_ARRAY);
     _pgNameToSQLType.put(pgArrayTypeName, Types.ARRAY);
@@ -172,7 +173,6 @@ public class TypeInfoCache implements TypeInfo {
       _pgNameToJavaClass.put(pgArrayTypeName, JAVA_SQL_ARRAY);
       _pgNameToSQLType.put(pgArrayTypeName, Types.ARRAY);
       _pgNameToOid.put(pgArrayTypeName, arrayOid);
-      _oidToPgName.put(arrayOid, pgArrayTypeName);
     }
   }
 
@@ -292,6 +292,10 @@ public class TypeInfoCache implements TypeInfo {
       return onPath;
     }
 
+    private String arraySuffix() {
+      return isElement ? "" : ARRAY_SUFFIX;
+    }
+
     private static String quote(String ident) {
       boolean hasDot = ident.indexOf('.') != -1;
       boolean isQuoted = ident.startsWith("\"") && ident.endsWith("\"");
@@ -301,11 +305,11 @@ public class TypeInfoCache implements TypeInfo {
     }
 
     String qualifiedName() {
-      return "\"" + nspname + "\".\"" + typname + "\"";
+      return "\"" + nspname + "\".\"" + elementTypname + "\"" + arraySuffix();
     }
 
     String onPathName() {
-      return quote(typname);
+      return quote(elementTypname) + arraySuffix();
     }
 
     String cacheName() {
