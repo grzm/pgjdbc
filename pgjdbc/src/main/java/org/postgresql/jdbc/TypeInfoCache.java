@@ -564,10 +564,10 @@ public class TypeInfoCache implements TypeInfo {
             + "  JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace"
             + "  LEFT JOIN pg_catalog.pg_type arr ON (arr.typelem, arr.typinput) = (t.oid, 'array_in'::regproc)"
             + "  LEFT JOIN pg_catalog.pg_type e ON t.typelem = e.oid"
-            + "  LEFT JOIN (SELECT s.r, (current_schemas(false))[r] AS nspname"
-            + "               FROM generate_series(1, array_upper(current_schemas(false), 1)) AS s (r)) AS sp"
+            + "  LEFT JOIN (SELECT s.r, (current_schemas(true))[r] AS nspname"
+            + "               FROM generate_series(1, array_upper(current_schemas(true), 1)) AS s (r)) AS sp"
             + "    USING (nspname)"
-            + " WHERE t.typname = ?"
+            + " WHERE t.typname = ? AND n.nspname = ANY(current_schemas(true))"
             + " ORDER BY sp.r, t.oid DESC LIMIT 1;";
         _getOidStatementSimple = _conn.prepareStatement(sql);
       }
